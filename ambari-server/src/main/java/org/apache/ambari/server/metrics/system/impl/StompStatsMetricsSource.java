@@ -64,7 +64,7 @@ public class StompStatsMetricsSource extends AbstractMetricsSource {
                 }
             }, interval, interval, TimeUnit.SECONDS);
         } catch (Exception e) {
-            LOG.info("Failed to start stomp stat source", e);
+            LOG.info("Throwing exception when starting stomp stat source", e);
         }
     }
 
