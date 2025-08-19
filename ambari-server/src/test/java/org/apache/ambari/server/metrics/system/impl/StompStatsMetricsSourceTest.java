@@ -19,16 +19,13 @@
 package org.apache.ambari.server.metrics.system.impl;
 
 import static org.easymock.EasyMock.createNiceMock;
-
 import static org.junit.Assert.assertEquals;
 
 import java.util.List;
 
 import org.apache.ambari.server.metrics.system.SingleMetric;
 import org.easymock.EasyMock;
-
 import org.junit.Test;
-
 import org.springframework.web.socket.config.WebSocketMessageBrokerStats;
 
 public class StompStatsMetricsSourceTest {
