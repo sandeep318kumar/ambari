@@ -1,0 +1,158 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+
+# Example Docker Compose for Ambari-managed Hadoop Cluster
+
+version: '3.7'
+
+services:
+  ambari-postgres:
+    image: ${POSTGRES_IMAGE:-postgres:13}
+    container_name: "ambari-postgres"
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ambari
+      POSTGRES_USER: ambari
+      POSTGRES_PASSWORD: bigdata
+    volumes:
+      - ambari-postgres-data:/var/lib/postgresql/data
+    networks:
+      - hadoop-cluster
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ambari -d ambari"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+  ambari-server:
+    image: ${AMBARI_IMAGE:-apacheambari/ambari:latest}
+    command: "StartServer -dbHost ambari-postgres -dbUser ambari -dbPassword bigdata"
+    container_name: "ambari-server"
+    hostname: "ambari-server.hadoop.local"
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "8440:8440"
+    environment:
+      JAVA_OPTS: "-Xms2G -Xmx4G -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+    depends_on:
+      ambari-postgres:
+        condition: service_healthy
+    networks:
+      - hadoop-cluster
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/api/v1/clusters || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    volumes:
+      - ambari-server-data:/opt/ambari/server/var
+
+  hadoop-master:
+    image: ${AMBARI_IMAGE:-apacheambari/ambari:latest}
+    command: "StartAgent -serverHost ambari-server"
+    container_name: "hadoop-master"
+    hostname: "hadoop-master.hadoop.local"
+    restart: unless-stopped
+    ports:
+      - "8441:8441"
+      - "9870:9870"  # HDFS NameNode Web UI
+      - "8088:8088"  # YARN ResourceManager Web UI
+      - "19888:19888"  # MapReduce JobHistory Server Web UI
+    environment:
+      JAVA_OPTS: "-Xms2G -Xmx4G -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+    depends_on:
+      ambari-server:
+        condition: service_healthy
+    networks:
+      - hadoop-cluster
+    volumes:
+      - hadoop-master-data:/opt/ambari/agent/var
+      - hadoop-hdfs-nn:/hadoop/hdfs/namenode
+
+  hadoop-worker1:
+    image: ${AMBARI_IMAGE:-apacheambari/ambari:latest}
+    command: "StartAgent -serverHost ambari-server"
+    container_name: "hadoop-worker1"
+    hostname: "hadoop-worker1.hadoop.local"
+    restart: unless-stopped
+    ports:
+      - "8442:8441"
+      - "9864:9864"  # HDFS DataNode Web UI
+      - "8042:8042"  # YARN NodeManager Web UI
+    environment:
+      JAVA_OPTS: "-Xms2G -Xmx4G -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+    depends_on:
+      ambari-server:
+        condition: service_healthy
+    networks:
+      - hadoop-cluster
+    volumes:
+      - hadoop-worker1-data:/opt/ambari/agent/var
+      - hadoop-hdfs-dn1:/hadoop/hdfs/datanode
+
+  hadoop-worker2:
+    image: ${AMBARI_IMAGE:-apacheambari/ambari:latest}
+    command: "StartAgent -serverHost ambari-server"
+    container_name: "hadoop-worker2"
+    hostname: "hadoop-worker2.hadoop.local"
+    restart: unless-stopped
+    ports:
+      - "8443:8441"
+      - "9865:9864"  # HDFS DataNode Web UI
+      - "8043:8042"  # YARN NodeManager Web UI
+    environment:
+      JAVA_OPTS: "-Xms2G -Xmx4G -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+    depends_on:
+      ambari-server:
+        condition: service_healthy
+    networks:
+      - hadoop-cluster
+    volumes:
+      - hadoop-worker2-data:/opt/ambari/agent/var
+      - hadoop-hdfs-dn2:/hadoop/hdfs/datanode
+    deploy:
+      replicas: ${HADOOP_WORKER_REPLICAS:-0}  # Default to 0, set to 1 to enable
+
+networks:
+  hadoop-cluster:
+    name: hadoop-cluster
+    driver: bridge
+
+volumes:
+  ambari-postgres-data:
+    name: ambari-postgres-data
+  ambari-server-data:
+    name: ambari-server-data
+  hadoop-master-data:
+    name: hadoop-master-data
+  hadoop-worker1-data:
+    name: hadoop-worker1-data
+  hadoop-worker2-data:
+    name: hadoop-worker2-data
+  hadoop-hdfs-nn:
+    name: hadoop-hdfs-namenode
+  hadoop-hdfs-dn1:
+    name: hadoop-hdfs-datanode1
+  hadoop-hdfs-dn2:
+    name: hadoop-hdfs-datanode2
