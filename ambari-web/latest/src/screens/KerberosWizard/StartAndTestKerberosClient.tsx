@@ -16,16 +16,16 @@
  * limitations under the License.
  */
 
+import OperationsProgress from "../../components/OperationsProgress";
+import { RequestApi } from "../../api/RequestApi";
 import { useContext, useEffect, useState } from "react";
+import WizardFooter from "../../components/StepWizard/WizardFooter";
+import { EnableKerberosContext } from "./kerberosStore/context"
 import { Alert } from "react-bootstrap";
 import { AppContext } from "../../store/context";
 import { translate } from "../../Utils/Utility";
+import { ActionTypes } from "./kerberosStore/types";
 import { get } from "lodash";
-import { EnableKerberosContext } from "./KerberosStore/context";
-import { RequestApi } from "../../api/requestApi";
-import OperationsProgress from "../../components/OperationProgress";
-import { ActionTypes } from "./KerberosStore/types";
-import WizardFooter from "../../components/StepWizard/WizardFooter";
 
 export default function StartAndTestKerberosClient() {
 
@@ -39,6 +39,7 @@ export default function StartAndTestKerberosClient() {
 
   const [ completionStatus, setCompletionStatus ] = useState(false);
   const [ nextEnabled, setNextEnabled ] = useState(true)
+  const [stepOperations, setStepOperations] = useState<any>([]);
   const { clusterName } = useContext(AppContext);
 
   useEffect(() => {
@@ -47,7 +48,9 @@ export default function StartAndTestKerberosClient() {
     }
   }, [ completionStatus ]);
 
-  const operations = [
+  //START GENAI
+
+  const initialOperations = [
     {
       id: 1,
       label: "Install Kerberos Client",
@@ -107,19 +110,44 @@ export default function StartAndTestKerberosClient() {
     },
   ];
 
+  const savedOperationsState = get(
+    state,
+    `kerberosWizardSteps.${wizardSteps[3].name}.data.operationsState`,
+    null
+  );
+
+  useEffect(() => {
+    const operations = (() => {
+      if (savedOperationsState && Array.isArray(savedOperationsState)) {
+        return initialOperations.map((originalOp) => {
+          const savedOp = savedOperationsState.find(
+            (saved: any) => saved.id === originalOp.id
+          );
+          return savedOp
+            ? { ...originalOp, ...savedOp, callback: originalOp.callback }
+            : originalOp;
+        });
+      }
+
+      return initialOperations;
+    })();
+    setStepOperations(operations);
+  }, [JSON.stringify(savedOperationsState)]);
+
+
+  if(!stepOperations || stepOperations.length===0){
+    return <div>Loading...</div>
+  }
+
+  //END GENAI
+
   return (
     <>
       { completionStatus &&
         <Alert variant="success">{translate("admin.kerberos.wizard.step3.notice.completed")}</Alert>
       }
       <OperationsProgress
-        operations={
-          (get(
-            state,
-            `kerberosWizardSteps.${wizardSteps[3].name}.data.operationsState`,
-            null
-          ) as any) ||
-          (operations as any)}
+        operations={stepOperations as any}
         title="Install and Test Kerberos Client"
         description="Install and Test Kerberos Client"
         setCompletionStatus={setCompletionStatus}

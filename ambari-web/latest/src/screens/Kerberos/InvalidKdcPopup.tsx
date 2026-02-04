@@ -1,25 +1,8 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 import { useState } from "react";
 import Modal from "../../components/Modal";
+import { messages } from "../messages";
+import { get } from "lodash";
 import { Alert, Form } from "react-bootstrap";
-import { translate } from "../../Utils/Utility";
 
 type InvalidKDCPopupProps = {
     isOpen: boolean;
@@ -27,7 +10,7 @@ type InvalidKDCPopupProps = {
     handleSave: (adminPrincipal: string, adminPassword: string, saveCredentials: boolean) => void;
 };
 
-export default function InvalidKDCPopup({isOpen, onClose, handleSave}: InvalidKDCPopupProps): React.ReactElement {
+export default function invalidKDCPopup({isOpen, onClose, handleSave}: InvalidKDCPopupProps): React.ReactElement {
     const [adminPrincipal, setAdminPrincipal] = useState("");
     const [adminPassword, setAdminPassword] = useState("");
     const [saveCredentials, setSaveCredentials] = useState(false);
@@ -58,6 +41,7 @@ export default function InvalidKDCPopup({isOpen, onClose, handleSave}: InvalidKD
                     <Form.Group controlId="saveCredentials">
                         <Form.Check
                         type="checkbox"
+                        id="save-admin-credentials-checkbox"
                         label="Save Admin Credentials"
                         checked={saveCredentials}
                         onChange={(e) => setSaveCredentials(e.target.checked)}
@@ -77,7 +61,7 @@ export default function InvalidKDCPopup({isOpen, onClose, handleSave}: InvalidKD
             <Modal
                 isOpen={isOpen}
                 onClose={() => onClose()}
-                modalTitle={translate("popup.invalid.KDC.header")}
+                modalTitle={get(messages, "popup.invalid.KDC.header", "")}
                 modalBody={getModalBody()}
                 options={{
                     okButtonText: "SAVE",
