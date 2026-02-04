@@ -1,20 +1,3 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 import { Utility } from './Utility';
 
 interface DbData {
@@ -79,18 +62,23 @@ interface DbData {
       this.data = this.getDb() || InitialData;
     }
 
-    private checkNamespace(namespace: string): boolean {
+    private checkNamespace(data: DbData, namespace: string): boolean {
       if (!namespace) return false;
-      if (!this.data[namespace]) {
-        this.data[namespace] = {};
+      if (!data[namespace]) {
+        data[namespace] = {};
       }
       return true;
     }
 
     getDb(): DbData | null {
       try {
+        // Use the same pattern as original Ember.js: localStorage.getObject('ambari')
         const stored = localStorage.getItem('ambari');
-        return stored ? JSON.parse(stored) : null;
+        if (!stored) return null;
+        
+        // Try to decrypt and parse the data
+        const decrypted = Utility.decryptData(stored);
+        return decrypted ? JSON.parse(decrypted) : null;
       } catch (e) {
         console.error('Error reading from localStorage:', e);
         return null;
@@ -99,7 +87,10 @@ interface DbData {
 
     private setDb(data: DbData): void {
       try {
-        localStorage.setItem('ambari', JSON.stringify(data));
+        // Use the same pattern as original Ember.js: localStorage.setObject('ambari', data)
+        const jsonString = JSON.stringify(data);
+        const encrypted = Utility.encryptData(jsonString);
+        localStorage.setItem('ambari', encrypted);
       } catch (e) {
         console.error('Error writing to localStorage:', e);
       }
@@ -129,16 +120,17 @@ interface DbData {
     }
 
     createNameSpace(namespace: string): void {
-      if (!this.data[namespace]) {
-        this.data[namespace] = {};
-        this.setDb(this.data);
+      const data = this.getDb() || InitialData;
+      if (!data[namespace]) {
+        data[namespace] = {};
+        this.setDb(data);
       }
     }
 
     // Core get/set methods
     get(namespace: string, key: string): any {
       const data = this.getDb();
-      if (!data || !this.checkNamespace(namespace)) return null;
+      if (!data || !this.checkNamespace(data, namespace)) return null;
       return key.includes('user-pref') ? 
         data[namespace][key] : 
         this.getNestedValue(data[namespace], key);
@@ -146,7 +138,7 @@ interface DbData {
 
     set(namespace: string, key: string, value: any): void {
       const data = this.getDb() || InitialData;
-      if (!this.checkNamespace(namespace)) return;
+      if (!this.checkNamespace(data, namespace)) return;
       if (key.includes('user-pref')) {
         data[namespace][key] = value;
       } else {

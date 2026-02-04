@@ -1,26 +1,9 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 import { set } from "lodash";
-import { ambariApi } from "./config/axiosConfig";
+import { ambariApi, supressErrorAmbariApi } from "./config/axiosConfig";
 export const RequestApi = {
     getRequestStatus: async function (clusterName: string,requestId:string) {
         const url = `/clusters/${clusterName}/requests/${requestId}?fields=*,tasks/Tasks/request_id,tasks/Tasks/command,tasks/Tasks/command_detail,tasks/Tasks/ops_display_name,tasks/Tasks/host_name,tasks/Tasks/id,tasks/Tasks/role,tasks/Tasks/status&minimal_response=true`;
-        const response = await ambariApi.request({
+        const response = await supressErrorAmbariApi.request({
             url: url,
             method: "GET",
         });
@@ -44,6 +27,7 @@ export const RequestApi = {
             "Content-Type":"text/plain"
           }
         });
+        set(response, "data.status", response.status);
         return response.data;
     },
     startServices: async function (clusterName: string, payload: any, params: string, method="PUT"){
@@ -68,6 +52,7 @@ export const RequestApi = {
           "Content-Type":"text/plain"
         }
       })
+      set(response, "data.status", response.status);
       return response.data;
     },
     postRequest: async function (clusterName: string, payload: any, method="POST") {
@@ -77,6 +62,7 @@ export const RequestApi = {
         method: method,
         data: payload,
       })
+      set(response, "data.status", response.status);
       return response.data;
     },
     getServices: async function (clusterName: string, payload: any, params: string, method="PUT"){
@@ -119,6 +105,7 @@ export const RequestApi = {
           "Content-Type":"text/plain"
         }
       })
+      set(response, "data.status", response.status);
       return response.data;
     },
     regenerateKeytabs: async function (clusterName: string, payload: any, params: string) {
@@ -131,6 +118,7 @@ export const RequestApi = {
           "Content-Type": "text/plain"
         }
       })
+      set(response, "data.status", response.status);
       return response.data;
     },
     kerberosDescriptor: async function (clusterName: string, payload: any) {

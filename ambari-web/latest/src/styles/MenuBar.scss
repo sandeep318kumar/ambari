@@ -1,0 +1,83 @@
+.VS-search {
+  position: relative;
+  width: 100%;
+
+  .VS-search-inner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 4px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: white;
+  }
+
+  .search-facet {
+    display: flex;
+    align-items: center;
+    background-color: #e9ecef;
+    border: 1px solid #dee2e6;
+    border-radius: 3px;
+    padding: 2px 6px;
+    margin: 2px;
+    font-size: 14px;
+
+    .category {
+      color: #495057;
+      margin-right: 4px;
+    }
+
+    .search-facet-input {
+      margin: 0 4px;
+    }
+
+    .search-facet-remove {
+      cursor: pointer;
+      color: #6c757d;
+      margin-left: 4px;
+      font-size: 16px;
+      line-height: 1;
+
+      &:hover {
+        color: #dc3545;
+      }
+    }
+  }
+
+  .search-input-wrapper {
+    position: relative;
+    flex: 1;
+    min-width: 150px;
+
+    .search-input {
+      width: 100%;
+      border: none;
+      outline: none;
+      padding: 4px;
+      font-size: 14px;
+
+      &::placeholder {
+        color: #6c757d;
+      }
+    }
+
+    .dropdown-menu {
+      width: 100%;
+      max-height: 300px;
+      overflow-y: auto;
+      margin-top: 4px;
+      padding: 4px 0;
+      font-size: 14px;
+
+      .dropdown-item {
+        padding: 6px 12px;
+        cursor: pointer;
+
+        &:hover {
+          background-color: #f8f9fa;
+        }
+      }
+    }
+  }
+}

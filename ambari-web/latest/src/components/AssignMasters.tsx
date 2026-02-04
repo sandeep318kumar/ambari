@@ -1,23 +1,7 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 import { useEffect, useReducer, useState } from "react";
-import { Row, Col, Form, Card, Button, CardBody } from "react-bootstrap";
+import { Row, Col, Form, Card, Button, CardBody, Alert } from "react-bootstrap";
+import { ChooseServicesApi } from "../api/ChooseServicesApi";
+import AssignMastersApi from "../api/AssignMastersApi";
 import { Utility } from "../Utils/Utility.ts";
 import { misc } from "../Utils/misc.ts";
 import Spinner from "./Spinner.tsx";
@@ -25,9 +9,8 @@ import _, { filter, get, map, uniq } from "lodash";
 import Select from "react-select";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faMinus, faPlus } from "@fortawesome/free-solid-svg-icons";
-import AssignMastersApi from "../api/AssignMastersApi.ts";
 import { ServicesResponse } from "../screens/ClusterWizard/types/StackServiceComponent.ts";
-import { ChooseServicesApi } from "../api/chooseServicesApi.ts";
+import { blueprintUtils } from "../screens/ClusterWizard/utils.ts";
 
 interface Host {
   hostname: string;
@@ -43,6 +26,8 @@ interface Masters {
   host_id: number;
   hostName: string;
   isInstalled?: boolean;
+  errorMessage?: string | null | undefined;
+  warnMessage?: string | null | undefined;
 }
 
 interface State {
@@ -77,12 +62,9 @@ function reducer(state: State, action: Action): State {
 
       // Add component to new host if newHost is not null and it doesn't already exist
       if (newHost && !updatedHosts[newHost].components.includes(component)) {
-        const index = updatedHosts[newHost].components.indexOf(component);
-        if (index !== -1) {
-          updatedHosts[newHost].components.splice(index + 1, 0, component);
-        } else {
-          updatedHosts[newHost].components.push(component);
-        }
+        updatedHosts[newHost].components.push(component);
+        // Note: We don't sort here as the sorting will be handled in the data preparation phase
+        // The components array in state.hosts is just for tracking which components are on which hosts
       }
 
       return {
@@ -125,6 +107,9 @@ export default function AssignMasters({
     ) || initialState);
   const [loading, setLoading] = useState(false);
   const [mastersData, setMastersData] = useState<Masters[]>([]);
+  const [servicesAndComponents, setServicesAndComponents] = useState<ServicesResponse | null>(null);
+  const [generalErrorMessages, setGeneralErrorMessages] = useState<string[]>([]);
+  const [generalWarningMessages, setGeneralWarningMessages] = useState<string[]>([]);
   const notMasters = ["MYSQL_SERVER", "HIVE_SERVER_INTERACTIVE"];
 
   useEffect(() => {
@@ -213,6 +198,14 @@ export default function AssignMasters({
         }
       });
 
+      // Sort hosts alphabetically and create a new sorted object
+      const sortedHostsData: { [key: string]: Host } = {};
+      Object.keys(hostsData)
+        .sort()
+        .forEach(hostname => {
+          sortedHostsData[hostname] = hostsData[hostname];
+        });
+
       // validations.
       const validationPayload = {
         hosts: hostnames,
@@ -228,12 +221,18 @@ export default function AssignMasters({
         },
         services: services,
       };
-      AssignMastersApi.postValidations(validationPayload, STACK, VERSION);
-      //TODO: Check for validations response.
-
-      setCanProceed(true);
-      const servicesAndComponents: ServicesResponse =
+      
+      try {
+        const validationResponse = await AssignMastersApi.postValidations(validationPayload, STACK, VERSION);
+        updateValidationsSuccessCallback(validationResponse);
+      } catch (error) {
+        console.error('Validation API call failed:', error);
+        setCanProceed(false);
+      }
+      const servicesAndComponentsData: ServicesResponse =
         await ChooseServicesApi.getServices(STACK, VERSION);
+      
+      setServicesAndComponents(servicesAndComponentsData);
 
       // Filter components based on is_master and ensure no duplicates on a single host
       // except for superMaster components like ZOOKEEPER_SERVER which can be on multiple hosts
@@ -244,7 +243,7 @@ export default function AssignMasters({
             if(notMasters.includes(component)) {
               return false;
             }
-            const serviceComponent = servicesAndComponents.items
+            const serviceComponent = servicesAndComponentsData.items
               .flatMap((service: any) => service.components)
               .find(
                 (comp: any) =>
@@ -271,9 +270,9 @@ export default function AssignMasters({
         );
       });
 
-      dispatch({ type: "SET_HOSTS_DATA", payload: hostsData });
+      dispatch({ type: "SET_HOSTS_DATA", payload: sortedHostsData });
       dispatchParent({
-        hostsData,
+        hostsData: sortedHostsData,
         mastersData: getTransformedMastersData(mastersData),
         state,
       });
@@ -283,11 +282,64 @@ export default function AssignMasters({
   }, []);
   
   useEffect(() => {
+    const transformedMastersData = getTransformedMastersData(mastersData);
     dispatchParent({
-      mastersData: getTransformedMastersData(mastersData),
+      mastersData: transformedMastersData,
       state,
     });
+    validateChange(transformedMastersData)
   }, [mastersData]);
+
+  // START GENAI
+  const validateChange = async (transformedMastersData: any) => {
+    try {
+      const allHostnames = map(transformedMastersData, "host_name");
+      const hostnames = uniq(allHostnames);
+      const validationResponse = await AssignMastersApi.postValidations(
+        {
+          hosts: hostnames,
+          services,
+          validate: "host_groups",
+          recommendations: getValidationRequestBody(transformedMastersData),
+        },
+        STACK,
+        VERSION,
+      );
+      updateValidationsSuccessCallback(validationResponse);
+    } catch (error) {
+      console.error('Validation API call failed:', error);
+      setCanProceed(false);
+    }
+  };
+
+  const getValidationRequestBody = (transformedMastersData: any) => {
+    const allHostnames = map(transformedMastersData, "host_name");
+    const hostnames = uniq(allHostnames);
+    const masterBlueprint = blueprintUtils.getBlueprint(
+      hostnames,
+      getSelectedMastersGroupedMapping(transformedMastersData)
+    );
+
+    return masterBlueprint;
+  };
+
+  const getSelectedMastersGroupedMapping = (transformedMastersData: any) => {
+    const hostComponentMapping: any = [];
+    transformedMastersData.forEach((selectedMaster: any) => {
+      hostComponentMapping.push({
+        hostname: selectedMaster.host_name,
+        components: selectedMaster.masterServices.map(
+          (selectedComponent: any) => {
+            return {
+              name: selectedComponent.component,
+            };
+          }
+        ),
+      });
+    });
+    return hostComponentMapping;
+  };
+  // END GENAI
 
   const getTransformedMastersData = (mastersDataToBeTransformed: any) => {
     const allHostnames = map(mastersDataToBeTransformed, "hostName");
@@ -309,11 +361,12 @@ export default function AssignMasters({
   };
 
   useEffect(() => {
-    async function setMasterComponentsData() {
-      const servicesAndComponents: ServicesResponse =
-        await ChooseServicesApi.getServices(STACK, VERSION);
+    function setMasterComponentsData() {
+      // Only proceed if we have cached services data
+      if (!servicesAndComponents) {
+        return;
+      }
 
-      
       const mastersData: Masters[] = Object.keys(state.hosts).flatMap(
         (hostname, index) =>
           state.hosts[hostname].components
@@ -343,17 +396,21 @@ export default function AssignMasters({
               hostName: hostname,
             };
           })
-          // Sort components alphabetically by display_name
-          .sort((a, b) => (a.display_name || '').localeCompare(b.display_name || ''))
       );
+      
+      // Sort all mastersData by display_name to ensure consistent ordering
+      const sortedMastersData = mastersData.sort((a, b) => 
+        (a.display_name || a.component).localeCompare(b.display_name || b.component)
+      );
+      
       dispatchParent({
-        mastersData: getTransformedMastersData(mastersData),
+        mastersData: getTransformedMastersData(sortedMastersData),
         state,
       });
-      setMastersData(mastersData);
+      setMastersData(sortedMastersData);
     }
     setMasterComponentsData();
-  }, [state.hosts]);
+  }, [state.hosts, servicesAndComponents]);
 
   const handleComponentChange = (
     component: string,
@@ -391,6 +448,71 @@ export default function AssignMasters({
     });
   };
 
+  // START GENAI
+  /**
+  * Remove validation messages for components which are already installed
+  */
+  const filterNotInstalledComponents = (validationData: any) => {
+    return validationData.resources[0].items.filter((item: any) => {
+      const host = state.hosts[item.host];
+      return !host || !host.components.includes(item['component-name']);
+    });
+  };
+
+  /**
+   * Process validation response
+   */
+  const updateValidationsSuccessCallback = (data: any) => {
+    const newGeneralErrorMessages: string[] = [];
+    const newGeneralWarningMessages: string[] = [];
+    
+    // Clear existing validation messages from mastersData
+    const updatedMastersData = mastersData.map(master => {
+      const { warnMessage, errorMessage, ...rest } = master;
+      return {
+        ...rest,
+        warnMessage: "",
+        errorMessage: "",
+      };
+    });
+    
+    let anyErrors = false;
+
+    // Process validation data - filter out installed components
+    const validationData = filterNotInstalledComponents(data);
+    validationData
+      .filter((item: any) => item.type === 'host-component')
+      .forEach((item: any) => {
+        // Find the master component that matches this validation item
+        const masterIndex = updatedMastersData.findIndex(master => 
+          master.component === item['component-name'] && 
+          master.hostName === item.host
+        );
+        
+        if (masterIndex !== -1) {
+          if (item.level === 'ERROR') {
+            anyErrors = true;
+            generalErrorMessages.push(item.message);
+            updatedMastersData[masterIndex] = {
+              ...updatedMastersData[masterIndex],
+              errorMessage: item.message
+            };
+          } else if (item.level === 'WARN') {
+            generalWarningMessages.push(item.message);
+            updatedMastersData[masterIndex] = {
+              ...updatedMastersData[masterIndex],
+              warnMessage: item.message
+            };
+          }
+        }
+      });
+
+    setGeneralErrorMessages(newGeneralErrorMessages);
+    setGeneralWarningMessages(newGeneralWarningMessages);
+
+    setCanProceed(!anyErrors);
+  };
+  // END GENAI
 
   return (
     <>
@@ -398,6 +520,30 @@ export default function AssignMasters({
       <p className="step-description">
         Assign master components to hosts you want to run them on.
       </p>
+      
+      {/* Display general validation messages */}
+      {generalErrorMessages.length > 0 && (
+        <Alert variant="danger" className="mb-3">
+          <strong>Validation Errors:</strong>
+          <ul className="mb-0 mt-2">
+            {generalErrorMessages.map((message, index) => (
+              <li key={index}>{message}</li>
+            ))}
+          </ul>
+        </Alert>
+      )}
+      
+      {generalWarningMessages.length > 0 && (
+        <Alert variant="warning" className="mb-3">
+          <strong>Validation Warnings:</strong>
+          <ul className="mb-0 mt-2">
+            {generalWarningMessages.map((message, index) => (
+              <li key={index}>{message}</li>
+            ))}
+          </ul>
+        </Alert>
+      )}
+      
       {loading ? (
         <Spinner />
       ) : (
@@ -405,57 +551,19 @@ export default function AssignMasters({
           <CardBody>
             <Row>
               <Col md={8}>
-                {(() => {
-                  // Get all components from all hosts
-                  const allComponentsWithHosts: Array<{component: string, hostname: string}> = [];
-                  
-                  // Collect all components with their assigned hosts
-                  Object.keys(state.hosts).forEach(hostname => {
-                    state.hosts[hostname].components.forEach(component => {
-                      allComponentsWithHosts.push({
-                        component,
-                        hostname
-                      });
-                    });
-                  });
-                  
-                  // Get display names for all components
-                  const componentDisplayNames: { [key: string]: string } = {};
-                  allComponentsWithHosts.forEach(({component, hostname}) => {
-                    const serviceComponent = mastersData.find(m => 
-                      m.component === component && m.hostName === hostname
-                    );
-                    if (serviceComponent) {
-                      // Use component as key to ensure uniqueness
-                      const key = `${component}-${hostname}`;
-                      componentDisplayNames[key] = serviceComponent.display_name || component;
-                    }
-                  });
-                  
-                  // Sort all components by their display names
-                  return allComponentsWithHosts
-                    // Filter out installed components
-                    .filter(({component, hostname}) => {
-                      const matchingMasterForInstall = mastersData.find(m => 
-                        m.component === component && m.hostName === hostname && m.isInstalled
-                      );
-                      return !(matchingMasterForInstall && matchingMasterForInstall.isInstalled);
-                    })
-                    // Sort by display name
-                    .sort((a, b) => {
-                      const keyA = `${a.component}-${a.hostname}`;
-                      const keyB = `${b.component}-${b.hostname}`;
-                      const displayNameA = componentDisplayNames[keyA] || a.component;
-                      const displayNameB = componentDisplayNames[keyB] || b.component;
-                      return displayNameA.localeCompare(displayNameB);
-                    })
-                    // Render each component
-                    .map(({component, hostname}) => {
-                      const key = `${component}-${hostname}`;
-                      const displayName = componentDisplayNames[key] || component;
-                      
-                      return (
-                        <Row key={`${hostname}-${component}`} className="mb-3">
+                {/* Render components using pre-sorted mastersData */}
+                {mastersData
+                  // START GENAI
+                  // Filter out installed components
+                  .filter((master) => !master.isInstalled)
+                  // Render each component
+                  .map((master) => {
+                    const { component, hostName: hostname, display_name, errorMessage, warnMessage } = master;
+                    const displayName = display_name || component;
+                    
+                    return (
+                      <div key={`${hostname}-${component}`}>
+                        <Row className="mb-3">
                           <Col xs={4} className="text-end mt-3">
                             <Form.Label className="fw-100">
                               {displayName}:
@@ -465,7 +573,7 @@ export default function AssignMasters({
                             <Select
                               id={`select-${component}`}
                               value={{ label: hostname, value: hostname }}
-                              onChange={(selectedOption: any) => {
+                              onChange={(selectedOption) => {
                                 if (selectedOption) {
                                   handleComponentChange(
                                     component,
@@ -492,39 +600,88 @@ export default function AssignMasters({
                             />
                           </Col>
                           <Col xs={4} className="d-flex align-items-center">
-                            {superMasters.includes(component) && (
-                              <>
-                                {Object.keys(state.hosts).some(
-                                  (host) =>
-                                    !state.hosts[host].components.includes(
-                                      component
-                                    )
-                                ) ? (
-                                  <Button
-                                    variant="success"
-                                    size="sm"
-                                    onClick={() => handleAddComponent(component)}
-                                  >
-                                    <FontAwesomeIcon icon={faPlus} />
-                                  </Button>
-                                ) : (
-                                  <Button
-                                    variant="success"
-                                    size="sm"
-                                    onClick={() =>
-                                      handleRemoveComponent(component, hostname)
-                                    }
-                                  >
-                                    <FontAwesomeIcon icon={faMinus} />
-                                  </Button>
-                                )}
-                              </>
-                            )}
+                            {superMasters.includes(component) && (() => {
+                              // Count how many hosts currently have this component
+                              const componentCount = Object.keys(state.hosts).filter(hostname => 
+                                state.hosts[hostname].components.includes(component)
+                              ).length;
+                              
+                              const totalHosts = Object.keys(state.hosts).length;
+                              
+                              // Logic based on requirements:
+                              // 1. If component is a super master, show + icon to increase count
+                              // 2. If count > 1, show both + and - icons
+                              // 3. If count reaches number of hosts, only show - icon
+                              // 4. If count is 1, only show + icon
+                              
+                              let showPlusButton = false;
+                              let showMinusButton = false;
+                              
+                              if (componentCount === totalHosts) {
+                                showMinusButton = true;
+                                showPlusButton = false;
+                              } else if (componentCount > 1) {
+                                showPlusButton = true;
+                                showMinusButton = true;
+                              } else if (componentCount === 1) {
+                                showPlusButton = true;
+                                showMinusButton = false;
+                              } else {
+                                showPlusButton = true;
+                                showMinusButton = false;
+                              }
+                              
+                              return (
+                                <div className="d-flex gap-1">
+                                  {showPlusButton && (
+                                    <Button
+                                      variant="success"
+                                      size="sm"
+                                      className="h15"
+                                      onClick={() => handleAddComponent(component)}
+                                      title={`Add ${component} (${componentCount}/${totalHosts})`}
+                                    >
+                                      <FontAwesomeIcon icon={faPlus} />
+                                    </Button>
+                                  )}
+                                  {showMinusButton && (
+                                    <Button
+                                      variant="secondary"
+                                      size="sm"
+                                      onClick={() => handleRemoveComponent(component, hostname)}
+                                      title={`Remove ${component} (${componentCount}/${totalHosts})`}
+                                    >
+                                      <FontAwesomeIcon icon={faMinus} />
+                                    </Button>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </Col>
                         </Row>
-                      );
-                    });
-                })()}
+                        {/* Display validation messages */}
+                        {errorMessage && (
+                          <Row className="mb-2">
+                            <Col xs={12}>
+                              <Alert variant="danger" className="py-2 small">
+                                <strong>Error:</strong> {errorMessage}
+                              </Alert>
+                            </Col>
+                          </Row>
+                        )}
+                        {warnMessage && (
+                          <Row className="mb-2">
+                            <Col xs={12}>
+                              <Alert variant="warning" className="py-2 small">
+                                <strong>Warning:</strong> {warnMessage}
+                              </Alert>
+                            </Col>
+                          </Row>
+                        )}
+                      </div>
+                    );
+                    // END GENAI
+                  })}
               </Col>
 
               <Col md={4}>
